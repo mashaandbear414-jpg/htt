@@ -215,28 +215,60 @@ PRIZES.forEach(p => { for(let i=0;i<p.w;i++) POOL.push(p); });
 let spinning = false, autoAnim = null, autoOffset = 0, lastTs = null;
 let spinsLeft = getSpins();
 
-function getTashkent10() {
-  // 10:00 Ташкент = 05:00 UTC
+function getResetTime() {
+  // Следующий сброс: 05:00 UTC (= 10:00 Ташкент)
   const now = new Date();
   const reset = new Date();
-  reset.setUTCHours(5, 0, 0, 0); // 05:00 UTC = 10:00 Ташкент
-  // если сейчас уже после 05:00 UTC — берём сегодня, иначе вчера
+  reset.setUTCHours(5, 0, 0, 0);
+  if (now.getTime() >= reset.getTime()) {
+    // Уже прошло 05:00 UTC сегодня — следующий сброс завтра
+    reset.setUTCDate(reset.getUTCDate() + 1);
+  }
+  return reset.getTime();
+}
+
+function getLastReset() {
+  // Последний прошедший сброс
+  const now = new Date();
+  const reset = new Date();
+  reset.setUTCHours(5, 0, 0, 0);
   if (now.getTime() < reset.getTime()) {
     reset.setUTCDate(reset.getUTCDate() - 1);
   }
   return reset.getTime();
 }
+
 function getSpins() {
-  const lastReset = parseInt(localStorage.getItem('lastReset') ?? '0');
-  const currentReset = getTashkent10();
+  const lastReset   = parseInt(localStorage.getItem('lastReset') ?? '0');
+  const currentReset = getLastReset();
   if (lastReset < currentReset) {
+    // Новый день — даём 1 попытку
     localStorage.setItem('spinsLeft', '1');
     localStorage.setItem('lastReset', currentReset.toString());
+    localStorage.removeItem('spinInProgress');
     return 1;
+  }
+  // Если был выход во время кручения — попытка уже потрачена
+  const inProgress = localStorage.getItem('spinInProgress');
+  if (inProgress === '1') {
+    localStorage.setItem('spinsLeft', '0');
+    localStorage.removeItem('spinInProgress');
+    return 0;
   }
   return parseInt(localStorage.getItem('spinsLeft') ?? '1');
 }
-function saveSpins(n) { localStorage.setItem('spinsLeft', String(n)); }
+
+function saveSpins(n) {
+  localStorage.setItem('spinsLeft', String(n));
+}
+
+function markSpinStart() {
+  localStorage.setItem('spinInProgress', '1');
+}
+
+function markSpinDone() {
+  localStorage.removeItem('spinInProgress');
+}
 function updateBadge() { document.getElementById('badgeText').textContent = spinsLeft > 0 ? `${spinsLeft} прокрутка доступна` : 'Прокрутки закончились'; }
 updateBadge();
 if (spinsLeft <= 0) document.getElementById('spinBtn').disabled = true;
@@ -272,8 +304,12 @@ function autoScroll(ts) {
 function startAuto() { if (autoAnim) return; lastTs = null; autoAnim = requestAnimationFrame(autoScroll); }
 function stopAuto() { if (autoAnim) { cancelAnimationFrame(autoAnim); autoAnim = null; } }
 
-localStorage.setItem('spinsLeft','1');
-localStorage.setItem('lastReset','0');
+// Одноразовый сброс
+if (!localStorage.getItem('reset_v1')) {
+  localStorage.setItem('spinsLeft','1');
+  localStorage.setItem('lastReset','0');
+  localStorage.setItem('reset_v1','1');
+}
 buildTrack();
 startAuto();
 
@@ -281,9 +317,10 @@ startAuto();
 function spinNow() {
   if (spinning || spinsLeft <= 0) return;
   spinning = true;
-  // Списываем попытку СРАЗУ — до анимации
+  // Списываем попытку СРАЗУ + помечаем что крутим
   spinsLeft--;
   saveSpins(spinsLeft);
+  markSpinStart();
   updateBadge();
   stopAuto();
   document.getElementById('spinBtn').disabled = true;
@@ -309,11 +346,32 @@ function spinNow() {
     track.style.transform = `translateX(${target}px)`;
   }));
 
-  setTimeout(() => {
+  setTimeout(async () => {
     if (winner.wCls) wi.classList.add(winner.wCls);
     spinning = false;
+    markSpinDone();
     tg?.HapticFeedback?.notificationOccurred(winner.id==='nothing'?'warning':'success');
-    tg?.sendData(JSON.stringify({ prize: winner.id }));
+
+    try {
+      const user = tg?.initDataUnsafe?.user || {};
+      const userId = user.id || 0;
+      const username = user.username || '';
+      const initData = tg?.initData || '';
+      const resp = await fetch('https://bot-production-daca7.up.railway.app/roulette', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prize: winner.id,
+          user_id: userId,
+          username: username,
+          init_data: initData,
+          secret: 'Yrener2011'
+        })
+      });
+      const result = await resp.json();
+      console.log('roulette result:', result);
+    } catch(e) { console.error('roulette fetch error:', e); }
+
     showResult(winner);
   }, 6800);
 }
