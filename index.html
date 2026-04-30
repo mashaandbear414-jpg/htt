@@ -377,6 +377,14 @@ function spinNow() {
       });
       const result = await resp.json();
       console.log('roulette result:', result);
+      if (result.ok === false && result.reason === 'already_spun') {
+        const h = Math.floor(result.retry_in_seconds / 3600);
+        const m = Math.floor((result.retry_in_seconds % 3600) / 60);
+        document.getElementById('sTitle').textContent = 'Уже крутили сегодня';
+        document.getElementById('sSub').textContent = 'Следующая прокрутка через: ' + h + ' ч. ' + m + ' мин.';
+        document.getElementById('overlay').classList.add('show');
+        return;
+      }
     } catch(e) { console.error('roulette fetch error:', e); }
 
     showResult(winner);
@@ -402,3 +410,4 @@ function closeSheet() {
 </script>
 </body>
 </html>
+
